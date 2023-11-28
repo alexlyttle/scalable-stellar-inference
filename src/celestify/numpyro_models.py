@@ -26,7 +26,7 @@ class SingleStarModel:
         params["evol"] = numpyro.sample("evol", dist.Beta(**self.const["evol"]))
         params["log_mass"] = numpyro.sample(
             "log_mass", 
-            dist.TruncatedNormal(**self.const["M_H"], low=np.log10(0.7), high=np.log10(2.3))
+            dist.TruncatedNormal(**self.const["log_mass"], low=np.log10(0.7), high=np.log10(2.3))
         )
         params["M_H"] = numpyro.sample(
             "M_H", 
