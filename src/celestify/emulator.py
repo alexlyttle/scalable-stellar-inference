@@ -1,5 +1,7 @@
 import os
 import numpy as np
+from typing import Callable
+from numpy.typing import ArrayLike
 from tensorflow.keras.models import load_model
 
 from . import PACKAGEDIR
@@ -7,7 +9,7 @@ from . import PACKAGEDIR
 class Emulator:
     PATH = os.path.join(PACKAGEDIR, "emulator")
 
-    def __init__(self, backend="numpy"):
+    def __init__(self, backend: str="numpy"):
         # Currently uses tensorflow to load weights
         # TODO: load only weights to remove tensorflow dependence
         model = load_model(self.PATH)
@@ -27,25 +29,35 @@ class Emulator:
             message = f"Backend value {backend!r} is invalid."
             raise ValueError(message)
 
-    def _model_tensorflow(self):
+    def _model_tensorflow(self) -> Callable:
         """Load tensorflow model."""
         import tensorflow as tf
         tf_model = load_model(self.PATH)
-        def model(x):
-            x = tf.constant(x)
-            return tf_model(x)
-        return model
-
-    def _model_numpy(self):
-        """Load numpy model."""
-        def model(x):
+        
+        def model(x: ArrayLike) -> tf.Tensor:
             """Emulator model.
             
             Args:
                 x (array-like): Neural network inputs.
             
             Returns:
-                jax.numpy.ndarray: Neural network outputs.
+                tensorflow.Tensor: Neural network outputs.
+            """
+            x = tf.constant(x)
+            return tf_model(x)
+        return model
+
+    def _model_numpy(self) -> Callable:
+        """Load numpy model."""
+        
+        def model(x: ArrayLike) -> np.ndarray:
+            """Emulator model.
+            
+            Args:
+                x (array-like): Neural network inputs.
+            
+            Returns:
+                numpy.ndarray: Neural network outputs.
             """
             x = np.atleast_2d(x)
             x -= self.weights[0]
@@ -57,7 +69,7 @@ class Emulator:
             return self.offset + self.scale * x
         return model
 
-    def _model_jax(self):
+    def _model_jax(self) -> Callable:
         """Load jax model."""
         import jax.numpy as jnp
         from jax.nn import relu
@@ -67,7 +79,7 @@ class Emulator:
         offset = jnp.array(self.offset)
         scale = jnp.array(self.scale)
         
-        def model(x):
+        def model(x: ArrayLike) -> jnp.ndarray:
             """Emulator model.
             
             Args:
@@ -85,17 +97,18 @@ class Emulator:
             return offset + scale * x
         return model
 
-    def _model_pytensor(self):
+    def _model_pytensor(self) -> Callable:
         """Load pytensor model"""
         import pytensor.tensor as pt
-        def model(x):
+        
+        def model(x: ArrayLike) -> pt.TensorVariable:
             """Emulator model.
             
             Args:
                 x (array-like): Neural network inputs.
             
             Returns:
-                jax.numpy.ndarray: Neural network outputs.
+                pytensor.TensorVariable: Neural network outputs.
             """
             x = pt.as_tensor(x, ndim=2)
             x -= self.weights[0]
@@ -107,14 +120,14 @@ class Emulator:
             return self.offset + self.scale * x
         return model
 
-    def __call__(self, x):
+    def __call__(self, x: ArrayLike) -> ArrayLike:
         """Emulator model.
         
         Args:
             x (array-like): Neural network inputs.
         
         Returns:
-            jax.numpy.ndarray: Neural network outputs.
+            jarray-like: Neural network outputs.
         """
         # TODO: input validation
         return self.model(x)
