@@ -1,6 +1,6 @@
 import os
 import numpy as np
-from tensorflow.python.keras.models import load_model
+from tensorflow.keras.models import load_model
 
 from . import PACKAGEDIR
 
