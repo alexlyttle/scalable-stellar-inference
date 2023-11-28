@@ -5,6 +5,7 @@ class Star:
     log_g_sun = 4.44
     log_teff_sun = 3.761326
     param_names = ["evol", "log_mass", "M_H", "Y", "a_MLT"]
+    determ_names = ["log_age", "log_Teff", "log_R", "log_Dnu", "log_g", "log_L"]
 
     def __init__(self, bands: Optional[list]=None, backend: str="jax"):
         self.bands = bands
