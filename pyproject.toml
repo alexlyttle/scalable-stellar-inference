@@ -5,5 +5,5 @@ build-backend = "setuptools.build_meta"  # the function to use to build the pack
 [project]
 name = "celestify"
 version = "0.0.1"
-dependencies = ["numpy", "scipy", "pandas", "matplotlib", "jaxlib", "jax", "tensorflow"]
+dependencies = ["numpy", "scipy", "pandas", "matplotlib", "jaxlib", "jax", "tensorflow", "numpyro"]
 requires-python = ">=3.8"
