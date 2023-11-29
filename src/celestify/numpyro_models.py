@@ -4,15 +4,18 @@ import numpyro.distributions as dist
 import numpy as np
 import jax.numpy as jnp
 
+from jax import vmap
+from typing import Optional
 from .star import Star
 
+
 class SingleStarModel:
-    def __init__(self, const=None, bands=None):
+    def __init__(self, const: Optional[dict]=None, bands: Optional[list]=None):
         self.star = Star(bands=bands, backend="jax")
         self.const = self._default_const(const=const)
         self.photometry = False if bands is None else True
 
-    def _default_const(self, const=None):
+    def _default_const(self, const: Optional[dict]=None) -> dict:
         if const is None:
             const = {}
         const.setdefault("dof", 10)
@@ -23,7 +26,7 @@ class SingleStarModel:
         const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
         return const
 
-    def star_prior(self):
+    def sample_star(self) -> dict:
         params = {}
         params["evol"] = numpyro.sample("evol", dist.Beta(**self.const["evol"]))
         params["log_mass"] = numpyro.sample(
@@ -36,20 +39,21 @@ class SingleStarModel:
         )
         params["Y"] = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
+
+        if self.photometry:
+            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+        
         return params
     
-    def bc_prior(self):
+    def bc_prior(self) -> dict:
         params = {}
         params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
         params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
         return params
 
-    def __call__(self, obs=None):
-        params = self.star_prior()
-
-        # TODO: if self.star.bands is not None, need prior on parallax and extinction
-        if self.photometry:
-            params.update(self.bc_prior())
+    def __call__(self, obs: Optional[dict]=None) -> None:
+        params = self.sample_star()
 
         determs = self.star(params)
         
@@ -60,4 +64,27 @@ class SingleStarModel:
             return
 
         for key, value in obs.items():
+            numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
+
+
+class MultiStarModel(SingleStarModel):
+    def __init__(self, num_stars: int, const: Optional[dict]=None, bands: Optional[list]=None):
+        super(MultiStarModel, self).__init__(const=const, bands=bands)
+        self.num_stars = num_stars
+    
+    def __call__(self, obs: Optional[dict]=None) -> None:
+
+        with numpyro.plate("stars", self.num_stars):
+            params = self.sample_star()
+
+        determs = vmap(self.star)(params)
+        
+        for key, value in determs.items():
+            numpyro.deterministic(key, value)
+
+        if obs is None:
+            return
+
+        for key, value in obs.items():
+            # TODO: add obs mask to allow some unobserved variables
             numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
