@@ -12,8 +12,8 @@ from .star import Star
 class SingleStarModel:
     def __init__(self, const: Optional[dict]=None, bands: Optional[list]=None):
         self.star = Star(bands=bands, backend="jax")
-        self.const = self._default_const(const=const)
         self.photometry = False if bands is None else True
+        self.const = self._default_const(const=const)
 
     def _default_const(self, const: Optional[dict]=None) -> dict:
         if const is None:
@@ -22,8 +22,10 @@ class SingleStarModel:
         const.setdefault("evol", dict(concentration1=2.0, concentration0=5.0))
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
-        const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
-        const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
+
+        if self.photometry:
+            const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
+            const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
         return const
 
     def sample_star(self) -> dict:
