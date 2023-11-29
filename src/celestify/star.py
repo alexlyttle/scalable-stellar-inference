@@ -1,14 +1,17 @@
 from typing import Callable, Optional
 from .emulator import Emulator
 from .bolometric_corrections import BolometricCorrections
+from math import log10
 
+grav_constant = 6.6743e-8  # in cgs units
 
 class Star:
-    log_g_sun = 4.44
-    log_teff_sun = 3.761326
+    log_m_sun = log10(1.988410) + 33
+    log_r_sun = log10(6.957) + 10
+    log_g_sun = log10(grav_constant) + log_m_sun - 2 * log_r_sun
+    log_l_sun = log10(3.828) + 33
+    log_teff_sun = log10(5772.0)
     bol_mag_sun = 4.75
-    param_names = ["evol", "log_mass", "M_H", "Y", "a_MLT", "plx", "Av"]
-    determ_names = ["log_age", "log_Teff", "log_R", "log_Dnu", "log_g", "log_L"]
 
     def __init__(self, bands: Optional[list]=None, backend: str="jax"):
         self.emulator = Emulator(backend=backend)
@@ -31,7 +34,7 @@ class Star:
             determs = {}  # deterministic parameters to return
             log_mass = params["log_mass"]
             mh = params["M_H"]
-            
+
             determs["mass"] = mass = 10**log_mass
             inputs = jnp.stack(
                 [params["evol"], mass, mh, params["Y"], params["a_MLT"]], 
