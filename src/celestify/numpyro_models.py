@@ -47,12 +47,6 @@ class SingleStarModel:
             params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
         
         return params
-    
-    def bc_prior(self) -> dict:
-        params = {}
-        params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
-        params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
-        return params
 
     def __call__(self, obs: Optional[dict]=None) -> None:
         params = self.sample_star()
@@ -74,10 +68,36 @@ class MultiStarModel(SingleStarModel):
         super(MultiStarModel, self).__init__(const=const, bands=bands)
         self.num_stars = num_stars
     
-    def __call__(self, obs: Optional[dict]=None) -> None:
+    def sample_population(self):
+        hyperparams = {}
+        hyperparams["mu_MLT"] = numpyro.sample("mu_MLT", dist.Uniform(low=1.3, high=2.7))
+        return hyperparams
 
-        with numpyro.plate("stars", self.num_stars):
-            params = self.sample_star()
+    def sample_star(self, hyperparams: dict) -> dict:
+        params = {}
+        params["evol"] = numpyro.sample("evol", dist.Beta(**self.const["evol"]))
+        params["log_mass"] = numpyro.sample(
+            "log_mass", 
+            dist.TruncatedNormal(**self.const["log_mass"], low=np.log10(0.7), high=np.log10(2.3))
+        )
+        params["M_H"] = numpyro.sample(
+            "M_H", 
+            dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.5)
+        )
+        params["Y"] = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
+        params["a_MLT"] = numpyro.deterministic("a_MLT", jnp.broadcast_to(hyperparams["mu_MLT"], (self.num_stars,)))
+
+        if self.photometry:
+            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+        
+        return params
+
+    def __call__(self, obs: Optional[dict]=None) -> None:
+        hyperparams = self.sample_population()
+
+        with numpyro.plate("star", self.num_stars):
+            params = self.sample_star(hyperparams)
 
         determs = vmap(self.star)(params)
         
