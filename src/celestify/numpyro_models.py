@@ -25,7 +25,7 @@ class SingleStarModel:
         # const.setdefault("evol", dict(concentration1=2.0, concentration0=5.0))
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
-        const.setdefault("log_evol", dict(loc=-0.6, scale=0.3))
+        const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
         if self.photometry:
             const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
             const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
