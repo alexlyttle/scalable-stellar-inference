@@ -13,6 +13,7 @@ class StarBase:
     log_l_sun = log10(3.828) + 33
     log_teff_sun = log10(5772.0)
     bol_mag_sun = 4.75
+    log_zx_sun = log10(0.0181)
 
     def __init__(self, bands: Optional[list]=None, backend: str="jax"):
         self.emulator = Emulator(backend=backend)
