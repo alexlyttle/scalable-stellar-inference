@@ -27,7 +27,8 @@ class SingleStarModel:
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
         if self.photometry:
-            const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
+            # const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
+            const.setdefault("plx", dict(loc=0.005, scale=1e-5))
             const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
         return const
 
@@ -42,15 +43,18 @@ class SingleStarModel:
         )
         params["M_H"] = numpyro.sample(
             "M_H", 
-            dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.4)
+            dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.5)
         )
+
+        # params["M_H"] = numpyro.sample("M_H", dist.Uniform(low=-0.9, high=0.5))
         params["Y"] = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
             params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
-        
+
         return params
 
     def __call__(self, obs: Optional[dict]=None) -> None:
@@ -91,7 +95,8 @@ class MultiStarModel(SingleStarModel):
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
             params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
 
         return params
