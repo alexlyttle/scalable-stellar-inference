@@ -36,6 +36,10 @@ class Star(StarBase):
             [teff, log_g, mh, params["Av"]],
             axis=-1
         )
+        # inputs = jnp.stack(
+        #     [teff, log_g, mh],
+        #     axis=-1
+        # )
         bc = self.bolometric_corrections(inputs).squeeze()
         determs["bol_mag"] = bol_mag = self.bol_mag_sun - 2.5 * log_lum
         determs["abs_mag"] = abs_mag = bol_mag - bc

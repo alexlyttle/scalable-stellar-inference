@@ -8,9 +8,12 @@ class BolometricCorrectionsBase:
 
     def _load_grid(self, bands: list):
         grid = MISTBolometricCorrectionGrid(bands=bands)
-        points = [grid.df.index.unique(level=name).to_numpy() for name in grid.df.index.names]
+        df = grid.df
+        # df = grid.df.reset_index("Av")
+        # df = df.loc[df.Av == 0.0].drop(columns="Av")
+        points = [df.index.unique(level=name).to_numpy() for name in df.index.names]
         shape = [x.shape[0] for x in points]
-        values = np.reshape(grid.df[bands].to_numpy(), shape + [len(bands),])
+        values = np.reshape(df[bands].to_numpy(), shape + [len(bands),])
         return points, values
 
     def model(self, x):
