@@ -39,7 +39,9 @@ class Star(StarBase):
         bc = self.bolometric_corrections(inputs).squeeze()
         determs["bol_mag"] = bol_mag = self.bol_mag_sun - 2.5 * log_lum
         determs["abs_mag"] = abs_mag = bol_mag - bc
-        determs["mag"] = abs_mag - 5 * (1 - jnp.log10(params["distance"]))
-        determs["plx"] = 1 / params["distance"]
+        determs["mag"] = abs_mag - 5 * (1 + jnp.log10(params["plx"]))
+        determs["distance"] = 1 / params["plx"]
+        # determs["mag"] = abs_mag - 5 * (1 - jnp.log10(params["distance"]))
+        # determs["plx"] = 1 / params["distance"]
 
         return determs
