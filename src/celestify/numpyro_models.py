@@ -11,6 +11,15 @@ from .star import Star
 def decenter(value, loc, scale):
     return (value - loc) / scale
 
+def lognorm_from_norm(*, loc, scale):
+    """Returns shape params for lognorm from mu and sigma of norm."""
+    var = scale**2
+    mu2 = loc**2
+    return (
+        jnp.log(mu2) - 0.5*jnp.log(mu2 + var),
+        jnp.sqrt(jnp.log(1 + var/mu2))
+    )
+
 
 class SingleStarModel:
     def __init__(self, const: Optional[dict]=None, bands: Optional[list]=None):
@@ -27,9 +36,10 @@ class SingleStarModel:
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
         if self.photometry:
-            # const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
-            const.setdefault("plx", dict(loc=0.005, scale=1e-5))
-            const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
+            const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
+            # const.setdefault("plx", dict(loc=0.005, scale=1e-5))
+            # const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
+            const.setdefault("Av", 0.0)
         return const
 
     def sample_star(self) -> dict:
@@ -51,10 +61,10 @@ class SingleStarModel:
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
-            params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
-            params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
-
+            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
+            # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+            params["Av"] = self.const["Av"]
         return params
 
     def __call__(self, obs: Optional[dict]=None) -> None:
@@ -95,9 +105,10 @@ class MultiStarModel(SingleStarModel):
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
-            params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
-            params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["plx"] = numpyro.sample("plx", dist.LogNormal(*lognorm_from_norm(**self.const["plx"])))
+            # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+            params["Av"] = self.const["Av"]
 
         return params
 
@@ -209,7 +220,8 @@ class HierarchicalStarModel(MultiStarModel):
 
         if self.photometry:
             params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
-            params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+            # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
+            params["Av"] = self.const["Av"]
 
         return params
 
