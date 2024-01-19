@@ -9,6 +9,15 @@ class BolometricCorrectionsBase:
     def _load_grid(self, bands: list):
         grid = MISTBolometricCorrectionGrid(bands=bands)
         df = grid.df
+
+        # df = grid.df.reset_index()
+        # mask = (df.Teff >= 3000) & (df.Teff <= 20000) \
+        #     & (df.logg >= 2.0) & (df.logg <= 6.0) \
+        #     & (df["[Fe/H]"] >= -1.0) & (df["[Fe/H]"] <= 0.5) \
+        #     & (df.Av <= 4.0)
+        # df = df.loc[mask]
+        # df = df.set_index(['Teff', 'logg', '[Fe/H]', 'Av'])
+
         # df = grid.df.reset_index("Av")
         # df = df.loc[df.Av == 0.0].drop(columns="Av")
         points = [df.index.unique(level=name).to_numpy() for name in df.index.names]
