@@ -37,9 +37,13 @@ class SingleStarModel:
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
         if self.photometry:
             const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
+            const.setdefault("scaled_distance", dict(concentration1=3.0, concentration0=1.0))
+            const.setdefault("max_distance", 500.0)
+            # const.setdefault("distance", 100.)
             # const.setdefault("plx", dict(loc=0.005, scale=1e-5))
             # const.setdefault("Av", dict(loc=1.0, scale=1.0))  # TODO: correlate with distance?
             const.setdefault("Av", 0.0)
+
         return const
 
     def sample_star(self) -> dict:
@@ -61,7 +65,10 @@ class SingleStarModel:
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
+            params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
+            # params["distance"] = self.const["distance"]
             # params["plx"] = numpyro.sample("plx", dist.Normal(**self.const["plx"]))
             # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
             params["Av"] = self.const["Av"]
@@ -79,7 +86,10 @@ class SingleStarModel:
             return
 
         for key, value in obs.items():
-            numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
+            if key == "plx":
+                numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
+            else:
+                numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
             # numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
 
 
@@ -105,10 +115,14 @@ class MultiStarModel(SingleStarModel):
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
         if self.photometry:
-            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
+            params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
+            # params["distance"] = jnp.broadcast_to(self.const["distance"], (self.num_stars,))
             # params["plx"] = numpyro.sample("plx", dist.LogNormal(*lognorm_from_norm(**self.const["plx"])))
             # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
-            params["Av"] = self.const["Av"]
+            params["Av"] = jnp.broadcast_to(self.const["Av"], (self.num_stars,))
+            # params["Av"] = jnp.zeros((self.num_stars,))
 
         return params
 
@@ -118,7 +132,7 @@ class MultiStarModel(SingleStarModel):
             params = self.sample_star()
 
         determs = vmap(self.star)(params)
-        
+
         for key, value in determs.items():
             numpyro.deterministic(key, value)
 
@@ -127,7 +141,10 @@ class MultiStarModel(SingleStarModel):
 
         for key, value in obs.items():
             # TODO: add obs mask to allow some unobserved variables
-            numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
+            if key == "plx":
+                numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
+            else:
+                numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
             # numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
 
 
@@ -219,9 +236,12 @@ class HierarchicalStarModel(MultiStarModel):
         # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
 
         if self.photometry:
-            params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
+            scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
+            params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
+            # params["distance"] = jnp.broadcast_to(self.const["distance"], (self.num_stars,))
             # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
-            params["Av"] = self.const["Av"]
+            params["Av"] = jnp.broadcast_to(self.const["Av"], (self.num_stars,))
 
         return params
 
@@ -241,5 +261,8 @@ class HierarchicalStarModel(MultiStarModel):
 
         for key, value in obs.items():
             # TODO: add obs mask to allow some unobserved variables
-            numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
+            if key == "plx":
+                numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
+            else:
+                numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
             # numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
