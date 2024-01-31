@@ -35,16 +35,21 @@ class Star(StarBase):
 
         if self.bolometric_corrections is None:
             return determs
-
+        
+        # BC INTERPOLATOR
         inputs = jnp.stack(
             [teff, log_g, mh, params["Av"]],
             axis=-1
         )
+        bc = self.bolometric_corrections.interpolate(inputs).squeeze()
+        
+        # BC EMULATOR
+        # For BC emulator, log_teff is input
         # inputs = jnp.stack(
-        #     [teff, log_g, mh],
+        #     [log_teff, log_g, mh, params["Av"]],
         #     axis=-1
         # )
-        bc = self.bolometric_corrections(inputs).squeeze()
+        # bc = self.bolometric_corrections(inputs).squeeze()
 
         determs["bol_mag"] = bol_mag = self.bol_mag_sun - 2.5 * log_lum
         determs["abs_mag"] = abs_mag = bol_mag - bc
@@ -56,6 +61,6 @@ class Star(StarBase):
         determs["mag"] = abs_mag - 5 * (1 - jnp.log10(params["distance"]))
         determs["plx"] = 1e3 / params["distance"]  # parallax in mas
 
-        determs["G"] = determs["mag"][2]
-        determs["BP_RP"] = bc[1] - bc[0]
+        determs["G"] = determs["mag"][0]
+        determs["BP_RP"] = bc[2] - bc[1]
         return determs
