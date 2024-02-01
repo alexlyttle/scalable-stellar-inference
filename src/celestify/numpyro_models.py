@@ -156,7 +156,9 @@ class HierarchicalStarModel(MultiStarModel):
         const = super(MultiStarModel, self)._default_const(const=const)
 
         # Hyperparameters
-        # const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
+        const.setdefault("mu_a", dict(low=1.5, high=2.5))
+
+        const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
         # const.setdefault("dY_dZ", dict(loc=1.5, scale=1.0))
         const.setdefault("dY_dZ", dict(low=0.0, high=3.0))
         # const.setdefault("sigma_Y", dict(scale=0.01))
@@ -165,7 +167,7 @@ class HierarchicalStarModel(MultiStarModel):
 
         # const.setdefault("a_1", dict(loc=2.0, scale=0.01))
         # const.setdefault("da_dM", dict(loc=-0.3, scale=0.3))
-        const.setdefault("da_dM", dict(low=-0.5, high=0.5))
+        # const.setdefault("da_dM", dict(low=-0.5, high=0.5))
         # const.setdefault("sigma_a", dict(scale=0.01))
         const.setdefault("sigma_a", dict(concentration=5.0, rate=0.3))
         # const.setdefault("sigma_a", dict(loc=-3.0, scale=0.7))
@@ -175,9 +177,9 @@ class HierarchicalStarModel(MultiStarModel):
         hyperparams = {}
 
         # hyperparams["mu_Y"] = numpyro.sample("mu_Y", dist.Uniform(low=0.22, high=0.32))
-        # hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(low=1.3, high=2.7))
+        hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(**self.const["mu_a"]))
 
-        # hyperparams["Y_0"] = numpyro.sample("Y_0", dist.Normal(**self.const["Y_0"]))
+        hyperparams["Y_0"] = numpyro.sample("Y_0", dist.Normal(**self.const["Y_0"]))
         # hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Normal(**self.const["dY_dZ"]))
         hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Uniform(**self.const["dY_dZ"]))
         # hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.HalfNormal(**self.const["sigma_Y"]))
@@ -186,7 +188,7 @@ class HierarchicalStarModel(MultiStarModel):
 
         # hyperparams["a_1"] = numpyro.sample("a_1", dist.Normal(**self.const["a_1"]))
         # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Normal(**self.const["da_dM"]))
-        hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Uniform(**self.const["da_dM"]))
+        # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Uniform(**self.const["da_dM"]))
         # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.HalfNormal(**self.const["sigma_a"]))
         hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.InverseGamma(**self.const["sigma_a"]))
         # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.LogNormal(**self.const["sigma_a"]))
@@ -211,8 +213,8 @@ class HierarchicalStarModel(MultiStarModel):
         # params["a_MLT"] = numpyro.deterministic("a_MLT", hyperparams["mu_a"] * ones)
 
         # mu_y = hyperparams["mu_Y"]
-        y0 = 0.247
-        # y0 = hyperparams["Y_0"]
+        # y0 = 0.247
+        y0 = hyperparams["Y_0"]
         f = hyperparams["dY_dZ"] / (10**-(mh + self.star.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
         sigma_y = hyperparams["sigma_Y"]
@@ -223,10 +225,10 @@ class HierarchicalStarModel(MultiStarModel):
         # TODO: reparam
         # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, hyperparams["sigma_Y"], low=0.22, high=0.32))
 
-        # mu_a = hyperparams["mu_a"]
-        a1 = 2.0
+        mu_a = hyperparams["mu_a"]
+        # a1 = 2.0
         # a1 = hyperparams["a_1"]
-        mu_a = a1 + hyperparams["da_dM"] * (10**log_mass - 1.0)
+        # mu_a = a1 + hyperparams["da_dM"] * (10**log_mass - 1.0)
         sigma_a = hyperparams["sigma_a"]
         # low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
         # a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
@@ -252,7 +254,7 @@ class HierarchicalStarModel(MultiStarModel):
             params = self.sample_star(hyperparams)
 
         determs = vmap(self.star)(params)
-        
+
         for key, value in determs.items():
             numpyro.deterministic(key, value)
 
