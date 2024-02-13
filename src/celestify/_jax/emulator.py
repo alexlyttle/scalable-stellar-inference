@@ -11,13 +11,13 @@ class Emulator(EmulatorBase):
         self.weights = [jnp.array(w) for w in self.weights]
         self.offset = jnp.array(self.offset)
         self.scale = jnp.array(self.scale)
-        
+
     def model(self, x: ArrayLike) -> jnp.ndarray:
         """Emulator model.
-        
+
         Args:
             x (array-like): Neural network inputs.
-        
+
         Returns:
             jax.numpy.ndarray: Neural network outputs.
         """
