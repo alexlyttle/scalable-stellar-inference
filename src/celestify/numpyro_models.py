@@ -37,10 +37,10 @@ class SingleStarModel:
     log_zx_sun = np.log10(0.0181)
     log_numax_sun = np.log10(3090.0)
 
-    def __init__(self, const: Optional[dict]=None, bands: Optional[list]=None):
+    def __init__(self, const: Optional[dict]=None):
         # self.star = Star(bands=bands, backend="jax")
         self.emulator = Emulator(backend="jax")
-        self.photometry = False if bands is None else True
+        self.photometry = False  # if bands is None else True
         self.const = self._default_const(const=const)
 
     def _emulator_precision(self):
@@ -171,8 +171,8 @@ class SingleStarModel:
 
 
 class MultiStarModel(SingleStarModel):
-    def __init__(self, num_stars: int, const: Optional[dict]=None, bands: Optional[list]=None):
-        super(MultiStarModel, self).__init__(const=const, bands=bands)
+    def __init__(self, num_stars: int, const: Optional[dict]=None):
+        super(MultiStarModel, self).__init__(const=const)
         self.num_stars = num_stars
 
     def __call__(self, obs: Optional[dict]=None) -> None:
@@ -185,8 +185,8 @@ class MultiStarModel(SingleStarModel):
 
 
 class HierarchicalStarModel(MultiStarModel):
-    def __init__(self, num_stars: int, const: Optional[dict]=None, bands: Optional[list]=None):
-        super(HierarchicalStarModel, self).__init__(num_stars, const=const, bands=bands)
+    def __init__(self, num_stars: int, const: Optional[dict]=None):
+        super(HierarchicalStarModel, self).__init__(num_stars, const=const)
     
     def _default_const(self, const: Optional[dict]=None) -> dict:
         const = super(MultiStarModel, self)._default_const(const=const)
@@ -209,7 +209,7 @@ class HierarchicalStarModel(MultiStarModel):
         # const.setdefault("sigma_a", dict(loc=-3.0, scale=0.7))
         return const
 
-    def sample_population(self):
+    def hyperparamters(self):
         hyperparams = {}
 
         # hyperparams["mu_Y"] = numpyro.sample("mu_Y", dist.Uniform(low=0.22, high=0.32))
@@ -219,18 +219,21 @@ class HierarchicalStarModel(MultiStarModel):
         # hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Normal(**self.const["dY_dZ"]))
         hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Uniform(**self.const["dY_dZ"]))
         # hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.HalfNormal(**self.const["sigma_Y"]))
-        hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.InverseGamma(**self.const["sigma_Y"]))
+        precision_Y = numpyro.sample("precision_Y", dist.Gamma(**self.const["sigma_Y"]))
+        hyperparams["sigma_Y"] = numpyro.deterministic("sigma_Y", 1/precision_Y)
         # hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.LogNormal(**self.const["sigma_Y"]))
 
         # hyperparams["a_1"] = numpyro.sample("a_1", dist.Normal(**self.const["a_1"]))
         # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Normal(**self.const["da_dM"]))
         # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Uniform(**self.const["da_dM"]))
         # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.HalfNormal(**self.const["sigma_a"]))
-        hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.InverseGamma(**self.const["sigma_a"]))
+        precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["sigma_a"]))
+        hyperparams["sigma_a"] = numpyro.deterministic("sigma_a", 1/precision_a)
+
         # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.LogNormal(**self.const["sigma_a"]))
         return hyperparams
 
-    def sample_star(self, hyperparams: dict) -> dict:
+    def parameters(self, hyperparams: dict) -> dict:
         params = {}
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
         params["evol"] = numpyro.deterministic("evol", 10**log_evol)
@@ -251,7 +254,7 @@ class HierarchicalStarModel(MultiStarModel):
         # mu_y = hyperparams["mu_Y"]
         # y0 = 0.247
         y0 = hyperparams["Y_0"]
-        f = hyperparams["dY_dZ"] / (10**-(mh + self.star.log_zx_sun) + 1)
+        f = hyperparams["dY_dZ"] / (10**-(mh + self.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
         sigma_y = hyperparams["sigma_Y"]
         # low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
@@ -284,23 +287,10 @@ class HierarchicalStarModel(MultiStarModel):
         return params
 
     def __call__(self, obs: Optional[dict]=None) -> None:
-        hyperparams = self.sample_population()
-
+        hyperparams = self.hyperparamters()
         with numpyro.plate("star", self.num_stars):
-            params = self.sample_star(hyperparams)
-
-        determs = vmap(self.star)(params)
-
-        for key, value in determs.items():
-            numpyro.deterministic(key, value)
-
-        if obs is None:
-            return
-
-        for key, value in obs.items():
-            # TODO: add obs mask to allow some unobserved variables
-            if key == "plx":
-                numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
-            else:
-                numpyro.sample(f"{key}_obs", dist.StudentT(self.const["dof"], determs[key], self.const[key]["scale"]), obs=value)
-            # numpyro.sample(f"{key}_obs", dist.Normal(determs[key], self.const[key]["scale"]), obs=value)
+            params = self.parameters(hyperparams)
+        inputs = self._emulator_inputs(params)
+        params["outputs"] = self.emulator(inputs)
+        determs = self.deterministics(params)
+        self.likelihood(determs, obs=obs)
