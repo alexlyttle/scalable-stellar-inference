@@ -135,7 +135,7 @@ class SingleStarModel:
         df = self.const["precision"]["df"]
         scale = self.const["precision"]["scale"]
 
-        scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
+        scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2), sample_shape=(4,))
         variance = scale**2 / scaled_precision  # variance on emulator outputs
 
         if obs is None:
