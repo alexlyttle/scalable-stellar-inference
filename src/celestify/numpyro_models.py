@@ -272,17 +272,17 @@ class HierarchicalStarModel(MultiStarModel):
         f = hyperparams["dY_dZ"] / (10**-(mh + self.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
         sigma_y = hyperparams["sigma_Y"]
-        # low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
-        # y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
-        y_decentered = numpyro.sample("Y_decentered", dist.Normal())
+        low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
+        y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
+        # y_decentered = numpyro.sample("Y_decentered", dist.Normal())
         params["Y"] = numpyro.deterministic("Y", mu_y + sigma_y * y_decentered)
         # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, hyperparams["sigma_Y"], low=0.22, high=0.32))
 
         mu_a = hyperparams["mu_a"]
         sigma_a = hyperparams["sigma_a"]
-        # low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
-        # a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
-        a_decentered = numpyro.sample("a_decentered", dist.Normal())
+        low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
+        a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
+        # a_decentered = numpyro.sample("a_decentered", dist.Normal())
         params["a_MLT"] = numpyro.deterministic("a_MLT", mu_a + sigma_a * a_decentered)
         # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
 
