@@ -43,13 +43,26 @@ class SingleStarModel:
         self.photometry = False  # if bands is None else True
         self.const = self._default_const(const=const)
 
+        # Attempt at MV likelihood
+        # obs_coeff = np.array(
+        #     [[0.0, 1.0, 0.0, 0.0],
+        #     [0.0, 4.0, 2.0, 0.0]]
+        # ) * ln10
+        # scale_tril = obs_coeff @ self.const["precision"]["scale_tril"]
+        # self.obs_coeff = obs_coeff
+        # self.covariance = scale_tril @ scale_tril.T
+        # self.obs_cov = jnp.diag(
+        #     jnp.stack([self.const["Teff"]["scale"], self.const["L"]["scale"]], -1)**2
+        # )
+
     def _emulator_precision(self):
         with open(os.path.join(PACKAGEDIR, "data/emulator_error.json"), "r") as file:
             params = json.loads(file.read())
         precision = {}
         precision["df"] = jnp.array(params["df"])
         precision["loc"] = jnp.array(params["mu"])
-        precision["scale"] = jnp.array(np.sqrt(params["theta"]))
+        precision["scale"] = scale =  jnp.array(np.sqrt(params["theta"]))
+        # precision["scale_tril"] = scale[:, None] * jnp.array(params["L_omega"])
         return precision
 
     def _default_const(self, const: Optional[dict]=None) -> dict:
@@ -68,17 +81,17 @@ class SingleStarModel:
             const.setdefault("scaled_distance", dict(concentration1=3.0, concentration0=1.0))
             const.setdefault("max_distance", 500.0)
             const.setdefault("Av", 0.0)
-
+        # const.setdefault("Teff", dict(scale=0.0))
+        # const.setdefault("L", dict(scale=0.0))
         return const
-
-    def _emulator_inputs(self, params: dict) -> jnp.ndarray:
-        return jnp.stack(
-            [params["evol"], 10**params["log_mass"], params["M_H"], params["Y"], params["a_MLT"]], 
-            axis=-1
-        )
 
     def parameters(self) -> dict:
         params = {}
+
+        # df = self.const["precision"]["df"]
+        # with numpyro.plate("outputs", 4):
+            # params["scaled_precision"] = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
+
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
         params["evol"] = numpyro.deterministic("evol", 10**log_evol)
         # params["evol"] = numpyro.sample("evol", dist.Beta(**self.const["evol"]))
@@ -104,10 +117,22 @@ class SingleStarModel:
             params["Av"] = self.const["Av"]
         return params
 
+    def emulate(self, params: dict) -> jnp.ndarray:
+        inputs = jnp.stack(
+            [params["evol"], 10**params["log_mass"], params["M_H"], params["Y"], params["a_MLT"]], 
+            axis=-1
+        )
+        outputs = self.emulator(inputs).squeeze()
+        return outputs + self.const["precision"]["loc"]  # correct outputs
+
     def deterministics(self, params: dict) -> dict:
         determs = {}
-        outputs = params["outputs"]
-        outputs += self.const["precision"]["loc"]  # correct outputs
+
+        # scale = self.const["precision"]["scale"]
+        # determs["variance"] = scale**2 / params["scaled_precision"].T  # variance on emulator outputs
+
+        # Emulate
+        outputs = self.emulate(params)
         log_mass = params["log_mass"]
 
         log_age = numpyro.deterministic("log_age", outputs[..., 0] - 9)  # log(age) in Gyr
@@ -134,9 +159,9 @@ class SingleStarModel:
         # Variance of neural network outputs
         df = self.const["precision"]["df"]
         scale = self.const["precision"]["scale"]
-
-        scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2), sample_shape=(4,))
+        scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
         variance = scale**2 / scaled_precision  # variance on emulator outputs
+        # variance = determs["variance"]
 
         if obs is None:
             return
@@ -146,42 +171,52 @@ class SingleStarModel:
             numpyro.sample(f"{key}_obs", dist.Normal(determs[key], var**0.5), obs=obs[key])
 
         if (key := "Teff") in obs:
-            sample_observable(key, variance[1] * ln10**2 * determs[key]**2)
+            sample_observable(key, variance[..., 1] * ln10**2 * determs[key]**2)
 
         if (key := "L") in obs:
-            var = (16 * variance[1] + 4 * variance[2]) * ln10**2 * determs[key]**2
+            var = (16 * variance[..., 1] + 4 * variance[..., 2]) * ln10**2 * determs[key]**2
             sample_observable(key, var)
         
         if (key := "Dnu") in obs:
-            sample_observable(key, variance[3] * ln10**2 * determs[key]**2)
-        
+            sample_observable(key, variance[..., 3] * ln10**2 * determs[key]**2)
+
         if (key := "log_g") in obs:
-            sample_observable(key, 4 * variance[2])
+            sample_observable(key, 4 * variance[..., 2])
         
         if (key := "numax") in obs:
-            var = (0.25 * variance[1] + 4 * variance[2]) * ln10**2 * determs[key]**2
+            var = (0.25 * variance[..., 1] + 4 * variance[2]) * ln10**2 * determs[key]**2
             sample_observable(key, var)
+
+        # Attempt at mutlivariate likelihood
+        # scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
+        # mu = jnp.stack([determs["log_Teff"], determs["log_L"]], -1) * ln10
+        # cov = self.covariance / scaled_precision
+
+        # numpyro.sample("obs", dist.MultivariateNormal(mu, cov + self.obs_cov/mu**2), obs=jnp.log(obs))
 
     def __call__(self, obs: Optional[dict]=None) -> None:
         params = self.parameters()
-        inputs = self._emulator_inputs(params)
-        params["outputs"] = self.emulator(inputs).squeeze()
         determs = self.deterministics(params)
         self.likelihood(determs, obs=obs)
+        # for key, determ in determs.items():
+            # numpyro.deterministic(key, determ)
 
 
 class MultiStarModel(SingleStarModel):
     def __init__(self, num_stars: int, const: Optional[dict]=None):
+        if num_stars < 2:
+            raise ValueError("Variable num_stars must be greater than 1.")
         super(MultiStarModel, self).__init__(const=const)
         self.num_stars = num_stars
 
     def __call__(self, obs: Optional[dict]=None) -> None:
         with numpyro.plate("star", self.num_stars):
             params = self.parameters()
-        inputs = self._emulator_inputs(params)
-        params["outputs"] = self.emulator(inputs)
         determs = self.deterministics(params)
+        # determs = vmap(self.deterministics)(params)
         self.likelihood(determs, obs=obs)
+        # for key, determ in determs.items():
+            # numpyro.deterministic(key, determ)
 
 
 class HierarchicalStarModel(MultiStarModel):
@@ -192,49 +227,35 @@ class HierarchicalStarModel(MultiStarModel):
         const = super(MultiStarModel, self)._default_const(const=const)
 
         # Hyperparameters
-        const.setdefault("mu_a", dict(low=1.5, high=2.5))
-
         const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
-        # const.setdefault("dY_dZ", dict(loc=1.5, scale=1.0))
         const.setdefault("dY_dZ", dict(low=0.0, high=3.0))
-        # const.setdefault("sigma_Y", dict(scale=0.01))
-        const.setdefault("sigma_Y", dict(concentration=5.0, rate=0.03))
-        # const.setdefault("sigma_Y", dict(loc=-5.3, scale=0.7))
+        const.setdefault("precision_Y", dict(concentration=3.0, rate=1e-4))
 
-        # const.setdefault("a_1", dict(loc=2.0, scale=0.01))
-        # const.setdefault("da_dM", dict(loc=-0.3, scale=0.3))
-        # const.setdefault("da_dM", dict(low=-0.5, high=0.5))
-        # const.setdefault("sigma_a", dict(scale=0.01))
-        const.setdefault("sigma_a", dict(concentration=5.0, rate=0.3))
-        # const.setdefault("sigma_a", dict(loc=-3.0, scale=0.7))
+        const.setdefault("mu_a", dict(low=1.5, high=2.5))
+        const.setdefault("precision_a", dict(concentration=3.0, rate=1e-2))
         return const
 
     def hyperparamters(self):
         hyperparams = {}
 
-        # hyperparams["mu_Y"] = numpyro.sample("mu_Y", dist.Uniform(low=0.22, high=0.32))
-        hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(**self.const["mu_a"]))
-
         hyperparams["Y_0"] = numpyro.sample("Y_0", dist.Normal(**self.const["Y_0"]))
-        # hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Normal(**self.const["dY_dZ"]))
         hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Uniform(**self.const["dY_dZ"]))
-        # hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.HalfNormal(**self.const["sigma_Y"]))
-        precision_Y = numpyro.sample("precision_Y", dist.Gamma(**self.const["sigma_Y"]))
-        hyperparams["sigma_Y"] = numpyro.deterministic("sigma_Y", 1/precision_Y)
-        # hyperparams["sigma_Y"] = numpyro.sample("sigma_Y", dist.LogNormal(**self.const["sigma_Y"]))
+        precision_Y = numpyro.sample("precision_Y", dist.Gamma(**self.const["precision_Y"]))
+        hyperparams["sigma_Y"] = numpyro.deterministic("sigma_Y", precision_Y**-0.5)
 
-        # hyperparams["a_1"] = numpyro.sample("a_1", dist.Normal(**self.const["a_1"]))
-        # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Normal(**self.const["da_dM"]))
-        # hyperparams["da_dM"] = numpyro.sample("da_dM", dist.Uniform(**self.const["da_dM"]))
-        # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.HalfNormal(**self.const["sigma_a"]))
-        precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["sigma_a"]))
-        hyperparams["sigma_a"] = numpyro.deterministic("sigma_a", 1/precision_a)
+        hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(**self.const["mu_a"]))
+        precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["precision_a"]))
+        hyperparams["sigma_a"] = numpyro.deterministic("sigma_a", precision_a**-0.5)
 
-        # hyperparams["sigma_a"] = numpyro.sample("sigma_a", dist.LogNormal(**self.const["sigma_a"]))
         return hyperparams
 
     def parameters(self, hyperparams: dict) -> dict:
         params = {}
+
+        # df = self.const["precision"]["df"]
+        # with numpyro.plate("outputs", 4):
+            # params["scaled_precision"] = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
+
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
         params["evol"] = numpyro.deterministic("evol", 10**log_evol)
 
@@ -247,12 +268,6 @@ class HierarchicalStarModel(MultiStarModel):
             dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.4)
         )
 
-        # ones = jnp.ones(self.num_stars)
-        # params["Y"] = numpyro.deterministic("Y", hyperparams["mu_Y"] * ones)
-        # params["a_MLT"] = numpyro.deterministic("a_MLT", hyperparams["mu_a"] * ones)
-
-        # mu_y = hyperparams["mu_Y"]
-        # y0 = 0.247
         y0 = hyperparams["Y_0"]
         f = hyperparams["dY_dZ"] / (10**-(mh + self.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
@@ -261,27 +276,19 @@ class HierarchicalStarModel(MultiStarModel):
         # y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
         y_decentered = numpyro.sample("Y_decentered", dist.Normal())
         params["Y"] = numpyro.deterministic("Y", mu_y + sigma_y * y_decentered)
-        # TODO: reparam
         # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, hyperparams["sigma_Y"], low=0.22, high=0.32))
 
         mu_a = hyperparams["mu_a"]
-        # a1 = 2.0
-        # a1 = hyperparams["a_1"]
-        # mu_a = a1 + hyperparams["da_dM"] * (10**log_mass - 1.0)
         sigma_a = hyperparams["sigma_a"]
         # low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
         # a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
         a_decentered = numpyro.sample("a_decentered", dist.Normal())
         params["a_MLT"] = numpyro.deterministic("a_MLT", mu_a + sigma_a * a_decentered)
-        # TODO: reparam
         # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
 
         if self.photometry:
-            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
             scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
             params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
-            # params["distance"] = jnp.broadcast_to(self.const["distance"], (self.num_stars,))
-            # params["Av"] = numpyro.sample("Av", dist.TruncatedNormal(**self.const["Av"], low=0.0, high=6.0))
             params["Av"] = jnp.broadcast_to(self.const["Av"], (self.num_stars,))
 
         return params
@@ -290,7 +297,5 @@ class HierarchicalStarModel(MultiStarModel):
         hyperparams = self.hyperparamters()
         with numpyro.plate("star", self.num_stars):
             params = self.parameters(hyperparams)
-        inputs = self._emulator_inputs(params)
-        params["outputs"] = self.emulator(inputs)
         determs = self.deterministics(params)
         self.likelihood(determs, obs=obs)
