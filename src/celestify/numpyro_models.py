@@ -43,7 +43,7 @@ class SingleStarModel:
     log_teff_sun = np.log10(5772.0)
     bol_mag_sun = 4.75
     log_zx_sun = np.log10(0.0181)
-    log_numax_sun = np.log10(3090.0)
+    log_numax_sun = np.log10(3090.0)        
 
     def __init__(self, const: Optional[dict]=None):
         # self.star = Star(bands=bands, backend="jax")
@@ -55,8 +55,9 @@ class SingleStarModel:
         obs_coeff = np.array(
             [[0.0, 1.0, 0.0, 0.0],
             [0.0, 4.0, 2.0, 0.0]]
-        ) * ln10
+        ) * ln10  # from log10 to ln space
         self.covariance = obs_coeff @ self.const["precision"]["cov"] @ obs_coeff.T
+        self.variance = jnp.diag(self.covariance)
         # scale_tril = obs_coeff @ self.const["precision"]["scale_tril"]
         # self.obs_coeff = obs_coeff
         # self.covariance = scale_tril @ scale_tril.T
@@ -67,6 +68,21 @@ class SingleStarModel:
         # self.obs_cov = jnp.diag(
         #     jnp.stack([self.const["Teff"]["scale"], self.const["L"]["scale"]], -1)**2
         # )
+        # input_transformation = jnp.zeros((4, 5))
+        # input_transformation[2, ]
+        # output_transformation = jnp.array(
+        #     [
+        #         [1., 0., 0., 0.],  # log(age/Gyr)
+        #         [0., 4., 2., 0.],  # log(L)
+        #         [0., 0., - 2., 0.],  # log(g)
+        #         [0., - 0.5, - 2., ]  # log(numax)
+        #     ]
+        # )
+        # self.output_transformation = jnp.vstack([jnp.eye(4), output_transformation])
+        # transformation_offset = jnp.array(
+        #     [- 9., - 4. * self.log_teff_sun, self.log_g_sun, self.log_numax_sun - self.log_g_sun + 0.5 * self.log_teff_sun]
+        # )
+
 
     def _emulator_precision(self):
         with open(os.path.join(PACKAGEDIR, "data/emulator_error.json"), "r") as file:
@@ -145,6 +161,11 @@ class SingleStarModel:
         outputs = self.emulator(inputs).squeeze()
         return outputs + self.const["precision"]["loc"]  # correct outputs
 
+    # def transform_outputs(self, inputs, outputs):
+    #     return jnp.matmul(self.input_transformation, inputs) \
+    #         + jnp.matmul(self.output_transformation, outputs) \
+    #         + self.transformation_offset
+
     def deterministics(self, params: dict) -> dict:
         determs = {}
 
@@ -159,11 +180,11 @@ class SingleStarModel:
         log_mass = params["log_mass"]
 
         log_age = numpyro.deterministic("log_age", outputs[..., 0] - 9)  # log(age) in Gyr
-        log_teff = numpyro.deterministic("log_Teff", outputs[..., 1])
+        determs["log_Teff"] = log_teff = numpyro.deterministic("log_Teff", outputs[..., 1])
         log_rad = numpyro.deterministic("log_R", outputs[..., 2])
         log_dnu = numpyro.deterministic("log_Dnu", outputs[..., 3])
-        log_lum = numpyro.deterministic("log_L", 2 * log_rad + 4 * (log_teff - self.log_teff_sun))
-        
+        determs["log_L"] = log_lum = numpyro.deterministic("log_L", 2 * log_rad + 4 * (log_teff - self.log_teff_sun)) 
+
         determs["log_g"] = log_g = numpyro.deterministic("log_g", log_mass - 2 * log_rad + self.log_g_sun)
         determs["Teff"] = numpyro.deterministic("Teff", 10**log_teff)
         determs["L"] = numpyro.deterministic("L", 10**log_lum)
@@ -220,11 +241,18 @@ class SingleStarModel:
             jnp.stack([obs["Teff"], obs["L"]], axis=-1),
             self.obs_var,
         )
-        mean = jnp.stack([determs["log_Teff"], determs["log_L"]], -1)
-        covariance_matrix = self.covariance / params["scaled_precision"][..., None, None]
-        covariance_matrix += obs_variance[..., None] * jnp.identity(obs_variance.shape[-1])
-        numpyro.sample("obs", dist.MultivariateNormal(mean, covariance_matrix=covariance_matrix), obs=obs_mean)
+        mean = ln10 * jnp.stack([determs["log_Teff"], determs["log_L"]], -1)  # natural logarithm
+        
+        # Full likelihood
+        # covariance_matrix = self.covariance / params["scaled_precision"][..., None, None]
+        # covariance_matrix += obs_variance[..., None] * jnp.identity(obs_variance.shape[-1])
+        # numpyro.sample("obs", dist.MultivariateNormal(mean, covariance_matrix=covariance_matrix), obs=obs_mean)
+        
+        # Diagonalised likelihood
+        variance = self.variance / params["scaled_precision"][..., None] + obs_variance
+        numpyro.sample("obs", dist.Normal(mean, jnp.sqrt(variance)), obs=obs_mean)
 
+        # Convert from log to exp?
         # covariance = self.covariance / params["scaled_precision"][..., None, None]
         # variance = jnp.diagonal(covariance, axis1=-1, axis2=-2)
         # mu = jnp.stack([determs["Teff"], determs["L"]], -1) * jnp.exp(0.5 * variance)
@@ -313,17 +341,17 @@ class HierarchicalStarModel(MultiStarModel):
         f = hyperparams["dY_dZ"] / (10**-(mh + self.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
         sigma_y = hyperparams["sigma_Y"]
-        low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
-        y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
-        # y_decentered = numpyro.sample("Y_decentered", dist.Normal())
+        # low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
+        # y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
+        y_decentered = numpyro.sample("Y_decentered", dist.Normal())
         params["Y"] = numpyro.deterministic("Y", mu_y + sigma_y * y_decentered)
         # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, hyperparams["sigma_Y"], low=0.22, high=0.32))
 
         mu_a = hyperparams["mu_a"]
         sigma_a = hyperparams["sigma_a"]
-        low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
-        a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
-        # a_decentered = numpyro.sample("a_decentered", dist.Normal())
+        # low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
+        # a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
+        a_decentered = numpyro.sample("a_decentered", dist.Normal())
         params["a_MLT"] = numpyro.deterministic("a_MLT", mu_a + sigma_a * a_decentered)
         # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
 
