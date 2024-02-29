@@ -53,7 +53,6 @@ class SingleStarModel:
     def __init__(self, const: Optional[dict]=None):
         # self.star = Star(bands=bands, backend="jax")
         self.emulator = Emulator(backend="jax")
-        self.photometry = False  # if bands is None else True
         self.const = self._default_const(const=const)
 
         # Attempt at MV likelihood
@@ -88,7 +87,6 @@ class SingleStarModel:
         #     [- 9., - 4. * self.log_teff_sun, self.log_g_sun, self.log_numax_sun - self.log_g_sun + 0.5 * self.log_teff_sun]
         # )
 
-
     def _emulator_precision(self):
         with open(os.path.join(PACKAGEDIR, "data/emulator_error.json"), "r") as file:
             params = json.loads(file.read())
@@ -110,13 +108,7 @@ class SingleStarModel:
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
-        if self.photometry:
-            # Distance power law and rate (inverse length scale)
-            # const.setdefault("distance", dict(concentration=3.0, rate=1e-3))
-            # Distance power law
-            const.setdefault("scaled_distance", dict(concentration1=3.0, concentration0=1.0))
-            const.setdefault("max_distance", 500.0)
-            const.setdefault("Av", 0.0)
+
         # const.setdefault("Teff", dict(scale=0.0))
         # const.setdefault("L", dict(scale=0.0))
         return const
@@ -124,22 +116,18 @@ class SingleStarModel:
     def parameters(self) -> dict:
         params = {}
 
-        # tril = self.const["precision"]["tril"]
-        # params["outputs_decentered"] = numpyro.sample("outputs_decentered", dist.MultivariateNormal(0.0, scale_tril=tril))
         df = self.const["precision"]["df"]
         params["scaled_precision"] = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
 
-        # df = self.const["precision"]["df"]
-        # with numpyro.plate("outputs", 4):
-            # params["scaled_precision"] = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
-
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
-        params["evol"] = numpyro.deterministic("evol", 10**log_evol)
-        # params["evol"] = numpyro.sample("evol", dist.Beta(**self.const["evol"]))
-        params["log_mass"] = numpyro.sample(
-            "log_mass", 
+        params["evol"] = numpyro.deterministic("evol", jnp.power(10.0, log_evol))
+
+        log_mass = numpyro.sample(
+            "log_mass",
             dist.TruncatedNormal(**self.const["log_mass"], low=np.log10(0.7), high=np.log10(2.3))
         )
+        params["mass"] = numpyro.deterministic("mass", jnp.power(10.0, log_mass))
+
         params["M_H"] = numpyro.sample(
             "M_H", 
             dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.5)
@@ -148,19 +136,11 @@ class SingleStarModel:
         params["Y"] = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
         params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
-        if self.photometry:
-            # Exponentially decreasing density
-            # params["distance"] = numpyro.sample("distance", dist.Gamma(**self.const["distance"]))
-
-            # Uniform density between 0 and max_distance
-            scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
-            params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
-            params["Av"] = self.const["Av"]
         return params
 
     def emulate(self, params: dict) -> jnp.ndarray:
         inputs = jnp.stack(
-            [params["evol"], 10**params["log_mass"], params["M_H"], params["Y"], params["a_MLT"]], 
+            [params["evol"], params["mass"], params["M_H"], params["Y"], params["a_MLT"]], 
             axis=-1
         )
         outputs = self.emulator(inputs).squeeze()
@@ -363,11 +343,6 @@ class HierarchicalStarModel(MultiStarModel):
         a_decentered = numpyro.sample("a_decentered", dist.Normal())
         params["a_MLT"] = numpyro.deterministic("a_MLT", mu_a + sigma_a * a_decentered)
         # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
-
-        if self.photometry:
-            scaled_distance = numpyro.sample("scaled_distance", dist.Beta(**self.const["scaled_distance"]))
-            params["distance"] = numpyro.deterministic("distance", self.const["max_distance"] * scaled_distance)
-            params["Av"] = jnp.broadcast_to(self.const["Av"], (self.num_stars,))
 
         return params
 
