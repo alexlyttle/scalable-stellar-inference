@@ -5,6 +5,7 @@ import numpy as np
 import jax.numpy as jnp
 
 from jax import vmap, jit
+from jax.scipy.special import expit
 from typing import Optional
 from .star import Star
 from .emulator import Emulator
@@ -30,6 +31,10 @@ def lognorm_from_norm(mean, variance):
         jnp.log(mean_squared) - 0.5*jnp.log(mean_squared + variance),
         jnp.log(1 + variance/mean_squared)
     )
+    # return (
+    #     jnp.log(mean),
+    #     variance / mean**2,
+    # )
 
 ln10 = jnp.log(10)
 grav_constant = 6.6743e-8  # in cgs units
@@ -295,22 +300,26 @@ class HierarchicalStarModel(MultiStarModel):
 
         # Hyperparameters
         const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
-        const.setdefault("dY_dZ", dict(low=0.0, high=3.0))
-        const.setdefault("precision_Y", dict(concentration=3.0, rate=1e-4))
+        # const.setdefault("dY_dZ", dict(low=0.0, high=3.0))
+        const.setdefault("dY_dZ", dict(loc=1.5, scale=0.5, low=0.0, high=3.0))
+        const.setdefault("precision_Y", dict(concentration=2.0, rate=2e-4/3))
 
-        const.setdefault("mu_a", dict(low=1.5, high=2.5))
-        const.setdefault("precision_a", dict(concentration=3.0, rate=1e-2))
+        # const.setdefault("mu_a", dict(low=1.5, high=2.5))
+        const.setdefault("mu_a", dict(loc=2.0, scale=0.1, low=1.3, high=2.7))
+        const.setdefault("precision_a", dict(concentration=2.0, rate=2e-2/3))
         return const
 
     def hyperparamters(self):
         hyperparams = {}
 
         hyperparams["Y_0"] = numpyro.sample("Y_0", dist.Normal(**self.const["Y_0"]))
-        hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Uniform(**self.const["dY_dZ"]))
+        # hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.Uniform(**self.const["dY_dZ"]))
+        hyperparams["dY_dZ"] = numpyro.sample("dY_dZ", dist.TruncatedNormal(**self.const["dY_dZ"]))        
         precision_Y = numpyro.sample("precision_Y", dist.Gamma(**self.const["precision_Y"]))
         hyperparams["sigma_Y"] = numpyro.deterministic("sigma_Y", precision_Y**-0.5)
 
-        hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(**self.const["mu_a"]))
+        # hyperparams["mu_a"] = numpyro.sample("mu_a", dist.Uniform(**self.const["mu_a"]))
+        hyperparams["mu_a"] = numpyro.sample("mu_a", dist.TruncatedNormal(**self.const["mu_a"]))
         precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["precision_a"]))
         hyperparams["sigma_a"] = numpyro.deterministic("sigma_a", precision_a**-0.5)
 
