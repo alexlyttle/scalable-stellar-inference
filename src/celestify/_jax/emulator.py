@@ -21,7 +21,7 @@ class Emulator(EmulatorBase):
         Returns:
             jax.numpy.ndarray: Neural network outputs.
         """
-        x = jnp.atleast_2d(jnp.array(x))
+        x = jnp.array(x)
         x -= self.weights[0]
         x /= self.weights[1]**0.5
         for w, b in zip(self.weights[3:-2:2], self.weights[4:-1:2]):
