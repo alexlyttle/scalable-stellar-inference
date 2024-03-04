@@ -48,44 +48,48 @@ class SingleStarModel:
     log_teff_sun = np.log10(5772.0)
     bol_mag_sun = 4.75
     log_zx_sun = np.log10(0.0181)
-    log_numax_sun = np.log10(3090.0)        
+    log_numax_sun = np.log10(3090.0) 
+    output_params = np.array([
+        "log_age", "log_Teff", "log_R", "log_Dnu",
+        "log_L", "log_g", "log_numax"
+    ])
 
-    def __init__(self, const: Optional[dict]=None):
+    def __init__(self, const: Optional[dict]=None, obs=None):
         # self.star = Star(bands=bands, backend="jax")
         self.emulator = Emulator(backend="jax")
         self.const = self._default_const(const=const)
 
-        # Attempt at MV likelihood
-        obs_coeff = np.array(
-            [[0.0, 1.0, 0.0, 0.0],
-            [0.0, 4.0, 2.0, 0.0]]
-        ) * ln10  # from log10 to ln space
-        self.covariance = obs_coeff @ self.const["precision"]["cov"] @ obs_coeff.T
-        self.variance = jnp.diag(self.covariance)
-        # scale_tril = obs_coeff @ self.const["precision"]["scale_tril"]
-        # self.obs_coeff = obs_coeff
-        # self.covariance = scale_tril @ scale_tril.T
-        self.obs_var = jnp.stack(jnp.broadcast_arrays(
-            self.const["Teff"]["scale"], 
-            self.const["L"]["scale"]
-            ), -1)**2
-        # self.obs_cov = jnp.diag(
-        #     jnp.stack([self.const["Teff"]["scale"], self.const["L"]["scale"]], -1)**2
-        # )
-        # input_transformation = jnp.zeros((4, 5))
-        # input_transformation[2, ]
-        # output_transformation = jnp.array(
-        #     [
-        #         [1., 0., 0., 0.],  # log(age/Gyr)
-        #         [0., 4., 2., 0.],  # log(L)
-        #         [0., 0., - 2., 0.],  # log(g)
-        #         [0., - 0.5, - 2., ]  # log(numax)
-        #     ]
-        # )
-        # self.output_transformation = jnp.vstack([jnp.eye(4), output_transformation])
-        # transformation_offset = jnp.array(
-        #     [- 9., - 4. * self.log_teff_sun, self.log_g_sun, self.log_numax_sun - self.log_g_sun + 0.5 * self.log_teff_sun]
-        # )
+        A = np.vstack(
+            [
+                np.eye(4),  # log(age), log(Teff), log(R), log(Dnu)
+                [0.0, 4.0, 2.0, 0.0],  # log(L)
+                [0.0, 0.0, -2.0, 0.0],  # log(g)
+                [0.0, -0.5, -2.0, 0.0],  # log(numax)
+            ]
+        )
+
+        B = np.vstack(
+            [
+                np.zeros((5, 7)),
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  # log(g)
+                [0.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0],  # log(numax)
+            ]
+        )
+
+        c = np.array(
+            [-9.0, 0.0, 0.0, 0.0, -4.0 * self.log_teff_sun, self.log_g_sun,
+             self.log_numax_sun - self.log_g_sun + 0.5 * self.log_teff_sun]
+        )
+
+        covariance = A @ self.const["precision"]["cov"] @ A.T
+        variance = np.diag(covariance)
+
+        self.A = A
+        self.B = B
+        self.c = c
+        self.covariance = covariance
+        self.variance = variance
+        self.output_indices = jnp.arange(self.output_params.shape[0])
 
     def _emulator_precision(self):
         with open(os.path.join(PACKAGEDIR, "data/emulator_error.json"), "r") as file:
@@ -108,150 +112,88 @@ class SingleStarModel:
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5))
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4))
-
         # const.setdefault("Teff", dict(scale=0.0))
         # const.setdefault("L", dict(scale=0.0))
         return const
 
-    def parameters(self) -> dict:
-        params = {}
-
-        df = self.const["precision"]["df"]
-        params["scaled_precision"] = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
+    def parameters(self) -> jnp.ndarray:
 
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
-        params["evol"] = numpyro.deterministic("evol", jnp.power(10.0, log_evol))
+        evol = numpyro.deterministic("evol", jnp.power(10.0, log_evol))
 
         log_mass = numpyro.sample(
             "log_mass",
             dist.TruncatedNormal(**self.const["log_mass"], low=np.log10(0.7), high=np.log10(2.3))
         )
-        params["mass"] = numpyro.deterministic("mass", jnp.power(10.0, log_mass))
+        mass = numpyro.deterministic("mass", jnp.power(10.0, log_mass))
 
-        params["M_H"] = numpyro.sample(
+        mh = numpyro.sample(
             "M_H", 
             dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.5)
         )
 
-        params["Y"] = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
-        params["a_MLT"] = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
+        y = numpyro.sample("Y", dist.Uniform(low=0.22, high=0.32))
+        a_mlt = numpyro.sample("a_MLT", dist.Uniform(low=1.3, high=2.7))
 
-        return params
+        df = self.const["precision"]["df"]
+        scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
 
-    def emulate(self, params: dict) -> jnp.ndarray:
-        inputs = jnp.stack(
-            [params["evol"], params["mass"], params["M_H"], params["Y"], params["a_MLT"]], 
+        return jnp.stack(
+            [evol, mass, mh, y, a_mlt, log_mass, scaled_precision],
             axis=-1
         )
-        outputs = self.emulator(inputs).squeeze()
-        return outputs + self.const["precision"]["loc"]  # correct outputs
 
-    # def transform_outputs(self, inputs, outputs):
-    #     return jnp.matmul(self.input_transformation, inputs) \
-    #         + jnp.matmul(self.output_transformation, outputs) \
-    #         + self.transformation_offset
-
-    def deterministics(self, params: dict) -> dict:
-        determs = {}
-
-        # scale = self.const["precision"]["scale"]
-        # determs["variance"] = scale**2 / params["scaled_precision"].T  # variance on emulator outputs
-        outputs = self.emulate(params)
-        # Emulate
-        # loc = self.emulate(params)
-        # scale = self.const["precision"]["scale"]
-        # outputs = loc + scale / params["scaled_precision"][..., None]**0.5 * params["outputs_decentered"]
-
-        log_mass = params["log_mass"]
-
-        log_age = numpyro.deterministic("log_age", outputs[..., 0] - 9)  # log(age) in Gyr
-        determs["log_Teff"] = log_teff = numpyro.deterministic("log_Teff", outputs[..., 1])
-        log_rad = numpyro.deterministic("log_R", outputs[..., 2])
-        log_dnu = numpyro.deterministic("log_Dnu", outputs[..., 3])
-        determs["log_L"] = log_lum = numpyro.deterministic("log_L", 2 * log_rad + 4 * (log_teff - self.log_teff_sun)) 
-
-        determs["log_g"] = log_g = numpyro.deterministic("log_g", log_mass - 2 * log_rad + self.log_g_sun)
-        determs["Teff"] = numpyro.deterministic("Teff", 10**log_teff)
-        determs["L"] = numpyro.deterministic("L", 10**log_lum)
-        
-        log_numax = numpyro.deterministic("log_numax", self.log_numax_sun + log_g - self.log_g_sun - 0.5 * (log_teff - self.log_teff_sun))
-        determs["numax"] = numpyro.deterministic("numax", 10**log_numax)
-        determs["Dnu"] = numpyro.deterministic("Dnu", 10**log_dnu)
-
-        numpyro.deterministic("mass", 10**log_mass)
-        numpyro.deterministic("R", 10**log_rad)
-        numpyro.deterministic("age", 10**log_age)
-
-        return determs
-
-    def likelihood(self, params, determs: dict, obs: Optional[dict]=None) -> None:
-        # Variance of neural network outputs
-        # scale = self.const["precision"]["scale"]
-        
-        # 1
-        # covariance = self.const["precision"]["cov"] / params["scaled_precision"][..., None, None]
-        # variance = jnp.diagonal(covariance, axis1=-2, axis2=-1)
-        
-        # 2
-        # variance = scale**2 / scaled_precision  # variance on emulator outputs
-        # variance = determs["variance"]
-
-        if obs is None:
-            return
-
-        # 1
-        # def sample_observable(key, var):
-        #     var += self.const[key]["scale"]**2
-        #     numpyro.sample(f"{key}_obs", dist.Normal(determs[key], var**0.5), obs=obs[key])
-
-        # if (key := "Teff") in obs:
-        #     sample_observable(key, variance[..., 1] * ln10**2 * determs[key]**2)
-
-        # if (key := "L") in obs:
-        #     var = (16 * variance[..., 1] + 4 * variance[..., 2] + 16 * covariance[..., 1, 2]) * ln10**2 * determs[key]**2
-        #     sample_observable(key, var)
-        
-        # if (key := "Dnu") in obs:
-        #     sample_observable(key, variance[..., 3] * ln10**2 * determs[key]**2)
-
-        # if (key := "log_g") in obs:
-        #     sample_observable(key, 4 * variance[..., 2])
-        
-        # if (key := "numax") in obs:
-        #     var = (0.25 * variance[..., 1] + 4 * variance[..., 2] + 2 * covariance[..., 1, 2]) * ln10**2 * determs[key]**2
-        #     sample_observable(key, var)
-
-        # 3 Attempt at mutlivariate likelihood
-        obs_mean, obs_variance = lognorm_from_norm(
-            jnp.stack([obs["Teff"], obs["L"]], axis=-1),
-            self.obs_var,
+    def predict(self, params: jnp.ndarray, kind: str="diag") -> tuple[jnp.ndarray]:
+        outputs = self.emulator(params[:5])
+        loc = (
+            jnp.matmul(self.A, outputs + self.const["precision"]["loc"])
+            + jnp.matmul(self.B, params)
+            + self.c
         )
-        mean = ln10 * jnp.stack([determs["log_Teff"], determs["log_L"]], -1)  # natural logarithm
-        
-        # Full likelihood
-        # covariance_matrix = self.covariance / params["scaled_precision"][..., None, None]
-        # covariance_matrix += obs_variance[..., None] * jnp.identity(obs_variance.shape[-1])
-        # numpyro.sample("obs", dist.MultivariateNormal(mean, covariance_matrix=covariance_matrix), obs=obs_mean)
-        
-        # Diagonalised likelihood
-        variance = self.variance / params["scaled_precision"][..., None] + obs_variance
-        numpyro.sample("obs", dist.Normal(mean, jnp.sqrt(variance)), obs=obs_mean)
 
-        # Convert from log to exp?
-        # covariance = self.covariance / params["scaled_precision"][..., None, None]
-        # variance = jnp.diagonal(covariance, axis1=-1, axis2=-2)
-        # mu = jnp.stack([determs["Teff"], determs["L"]], -1) * jnp.exp(0.5 * variance)
-        # cov = mu[..., None] * jnp.swapaxes(mu[..., None], -1, -2) * (jnp.exp(covariance) - 1) \
-        #     + self.obs_var[..., None] * jnp.eye(self.obs_var.shape[-1])
-        # numpyro.sample("obs", dist.MultivariateNormal(mu, cov), obs=obs)
-        # numpyro.sample("obs", dist.Normal(mu, jnp.diag(cov)**0.5), obs=obs)
+        if kind == "none":
+            return loc,
 
-    def __call__(self, obs: Optional[dict]=None) -> None:
+        if kind == "diag":
+            return loc, self.variance / params[-1]
+
+        if kind == "full":
+            return loc, self.covariance / params[-1]
+
+        raise ValueError("Kind must be one of 'none', 'diag', or 'full'.")
+
+    def deterministics(self, y, indices):
+        for i, key in enumerate(self.output_params[indices]):
+            numpyro.deterministic(key, y[..., i])
+
+    def likelihood(self, mean, covariance, obs=None, obs_indices=None, diag=None, kind="diag"):
+        if obs_indices is None:
+            obs_indices = self.output_indices
+        
+        if diag is None:
+            diag = jnp.zeros(self.output_params.shape[0])
+
+        mean = mean[..., obs_indices]
+        
+        if kind == "diag":
+            var = covariance[..., obs_indices]
+            return numpyro.sample("y", dist.Normal(mean, jnp.sqrt(var + diag)), obs=obs)
+        
+        if kind == "full":
+            cov = covariance[..., obs_indices, obs_indices[:, None]]
+            cov += diag[..., None] * jnp.identity(mean.shape[0])
+            return numpyro.sample("y", dist.MultivariateNormal(mean, cov), obs=obs)
+
+    def __call__(self, obs: Optional[jnp.ndarray]=None, obs_indices=None,
+                 diag=None, kind="diag") -> None:
+        
         params = self.parameters()
-        determs = self.deterministics(params)
-        self.likelihood(params, determs, obs=obs)
-        # for key, determ in determs.items():
-            # numpyro.deterministic(key, determ)
+        mean, covariance = self.predict(params, kind)
+        self.likelihood(mean, covariance, obs=obs, obs_indices=obs_indices,
+                        diag=diag, kind=kind)
+
+        # if obs is None:
+            # self.deterministics(y, obs_indices)
 
 
 class MultiStarModel(SingleStarModel):
@@ -261,14 +203,13 @@ class MultiStarModel(SingleStarModel):
         super(MultiStarModel, self).__init__(const=const)
         self.num_stars = num_stars
 
-    def __call__(self, obs: Optional[dict]=None) -> None:
+    def __call__(self, obs: Optional[jnp.ndarray]=None, obs_indices=None,
+                 diag=None, kind="diag") -> None:
         with numpyro.plate("star", self.num_stars):
             params = self.parameters()
-        determs = self.deterministics(params)
-        # determs = vmap(self.deterministics)(params)
-        self.likelihood(params, determs, obs=obs)
-        # for key, determ in determs.items():
-            # numpyro.deterministic(key, determ)
+        mean, covariance = vmap(self.predict, in_axes=(0, None))(params, kind)
+        self.likelihood(mean, covariance, obs=obs, obs_indices=obs_indices,
+                        diag=diag, kind=kind)
 
 
 class HierarchicalStarModel(MultiStarModel):
