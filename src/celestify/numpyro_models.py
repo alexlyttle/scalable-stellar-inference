@@ -243,18 +243,18 @@ class HierarchicalStarModel(MultiStarModel):
         df = self.const["delta"]["df"]
         scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
 
-        log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"], high=0.0))
+        log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"]))
         evol = numpyro.deterministic("evol", 10**log_evol)
 
         log_mass = numpyro.sample(
             "log_mass", 
-            dist.TruncatedNormal(**self.const["log_mass"], low=np.log10(0.7), high=np.log10(2.3))
+            dist.TruncatedNormal(**self.const["log_mass"])
         )
         mass = numpyro.deterministic("mass", jnp.power(10.0, log_mass))
 
         mh = numpyro.sample(
             "M_H", 
-            dist.TruncatedNormal(**self.const["M_H"], low=-0.9, high=0.4)
+            dist.TruncatedNormal(**self.const["M_H"])
         )
 
         y0 = hyperparams[0]
