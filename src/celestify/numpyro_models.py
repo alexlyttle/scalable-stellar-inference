@@ -4,10 +4,8 @@ import numpyro.distributions as dist
 import numpy as np
 import jax.numpy as jnp
 
-from jax import vmap, jit
-from jax.scipy.special import expit
+from jax import vmap
 from typing import Optional
-from .star import Star
 from .emulator import Emulator
 from . import PACKAGEDIR
 
