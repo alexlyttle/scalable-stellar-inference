@@ -115,9 +115,9 @@ class SingleStarModel:
         const.setdefault("delta", self._emulator_precision())
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4, high=0.0))
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=np.log10(0.7), high=np.log10(2.3)))
-        const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.9, high=0.5))
-        const.setdefault("Y", dict(low=0.22, high=0.32))
-        const.setdefault("a_MLT", dict(low=1.3, high=2.7))
+        const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.8, high=0.4))
+        const.setdefault("Y", dict(low=0.23, high=0.31))
+        const.setdefault("a_MLT", dict(low=1.5, high=2.5))
         return const
 
     def parameters(self) -> jnp.ndarray:
@@ -136,7 +136,20 @@ class SingleStarModel:
         )
 
         y = numpyro.sample("Y", dist.Uniform(**self.const["Y"]))
+        # loc = self.const["Y"]["low"]
+        # scale = self.const["Y"]["high"] - loc
+        # y = numpyro.deterministic(
+        #     "Y",
+        #     loc + scale * numpyro.sample("Y_scaled", dist.Beta(1.2, 1.2))
+        # )
+
         a_mlt = numpyro.sample("a_MLT", dist.Uniform(**self.const["a_MLT"]))
+        # loc = self.const["a_MLT"]["low"]
+        # scale = self.const["a_MLT"]["high"] - loc
+        # a_mlt = numpyro.deterministic(
+        #     "a_MLT",
+        #     loc + scale * numpyro.sample("a_MLT_scaled", dist.Beta(1.2, 1.2))
+        # )
 
         df = self.const["delta"]["df"]
         scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
