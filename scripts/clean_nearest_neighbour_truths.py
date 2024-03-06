@@ -32,4 +32,4 @@ df["numax"] = 10**df["log_numax"]
 
 mask = (df.Teff < max_teff) & (df.age < max_age)
 df = df.loc[mask].rename(rename_cols, axis=1)
-df.to_csv(os.path.join(directory, output_filename))
+df.reset_index().to_csv(os.path.join(directory, output_filename))
