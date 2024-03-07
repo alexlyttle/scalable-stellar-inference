@@ -30,7 +30,7 @@ stat_funcs = {
 }
 
 plot_var_names = {
-    "params": ["evol", "mass", "M_H", "Y", "a_MLT"],
+    "params": ["evol", "mass", "M_H", "Y", "a_MLT", "scaled_precision"],
     "outputs": SingleStarModel.outputs,
 }
 
@@ -117,7 +117,9 @@ def load_truths(file: Optional[io.TextIOWrapper], star: int) -> dict:
         return file
     logger.debug(f"Loading truths from '{file.name}'.")
     truths = pd.read_csv(file, index_col=0)
-    return truths.loc[star].to_dict()
+    truths = truths.loc[star].to_dict()
+    truths["scaled_precision"] = None
+    return truths
 
 def init_model(data: dict, observables: list) -> SingleStarModel:
     # Create dictionary of model constants
