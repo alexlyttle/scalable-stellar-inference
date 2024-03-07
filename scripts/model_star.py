@@ -146,6 +146,7 @@ def run_mcmc(key: Array, mcmc: MCMC, obs: dict) -> MCMC:
     logger.debug(f"Observations y={y}.")
     logger.debug(f"Diagonal diag={diag}.")
 
+    logger.info("Running MCMC.")
     mcmc.run(key, obs=y, diag=diag)
     logger.info("Run complete.")
     mcmc.print_summary()
