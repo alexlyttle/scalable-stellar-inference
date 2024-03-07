@@ -1,9 +1,8 @@
 import numpyro, os, json
 import numpyro.distributions as dist
-
-import numpy as np
 import jax.numpy as jnp
 
+from math import log10, log
 from jax import vmap
 from typing import Optional
 from .emulator import Emulator
@@ -34,18 +33,18 @@ def lognorm_from_norm(mean, variance):
     #     variance / mean**2,
     # )
 
-ln10 = np.log(10)
+ln10 = log(10)
 grav_constant = 6.6743e-8  # in cgs units
 
 
 class SingleStarModel:
-    log_m_sun = np.log10(1.988410) + 33
-    log_r_sun = np.log10(6.957) + 10
-    log_g_sun = np.log10(grav_constant) + log_m_sun - 2 * log_r_sun
-    log_l_sun = np.log10(3.828) + 33
-    log_teff_sun = np.log10(5772.0)
-    log_zx_sun = np.log10(0.0181)
-    log_numax_sun = np.log10(3090.0)
+    log_m_sun = log10(1.988410) + 33
+    log_r_sun = log10(6.957) + 10
+    log_g_sun = log10(grav_constant) + log_m_sun - 2 * log_r_sun
+    log_l_sun = log10(3.828) + 33
+    log_teff_sun = log10(5772.0)
+    log_zx_sun = log10(0.0181)
+    log_numax_sun = log10(3090.0)
     outputs = [
         "log_age", "log_Teff", "log_R", "log_Dnu",
         "log_L", "log_g", "log_numax"
@@ -104,7 +103,7 @@ class SingleStarModel:
             params = json.loads(file.read())
         df = jnp.array(params["df"])
         loc = jnp.array(params["mu"])
-        scale =  jnp.array(np.sqrt(params["theta"]))
+        scale = jnp.array(jnp.sqrt(jnp.array(params["theta"])))
         scale_tril = scale[:, None] * jnp.array(params["L_omega"])
         cov = scale_tril @ scale_tril.T
         return dict(df=df, loc=loc, cov=cov)
@@ -114,7 +113,7 @@ class SingleStarModel:
             const = {}
         const.setdefault("delta", self._emulator_precision())
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4, high=0.0))
-        const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=np.log10(0.75), high=np.log10(2.25)))
+        const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=log10(0.75), high=log10(2.25)))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.85, high=0.45))
         const.setdefault("Y", dict(low=0.23, high=0.31))
         const.setdefault("a_MLT", dict(low=1.5, high=2.5))
