@@ -1,21 +1,11 @@
 import os, h5py
-# from tensorflow.keras.models import load_model
-
 from . import PACKAGEDIR
 
 
 class EmulatorBase:
-    # PATH = os.path.join(PACKAGEDIR, "emulator")
     PATH = os.path.join(PACKAGEDIR, "data", "emulator_weights.h5")    
 
     def __init__(self):
-        # Currently uses tensorflow to load weights
-        # TODO: load only weights to remove tensorflow dependence
-        # model = load_model(self.PATH)
-        # self.weights = model.get_weights()
-        # self.offset = model.layers[-1].offset
-        # self.scale = model.layers[-1].scale
-
         keys = [f"dense_{i}" for i in range(7, 14)]
         weights = []
         bias = []
