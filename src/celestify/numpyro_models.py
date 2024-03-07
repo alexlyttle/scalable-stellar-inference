@@ -113,7 +113,7 @@ class SingleStarModel:
             const = {}
         const.setdefault("delta", self._emulator_precision())
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4, high=0.0))
-        const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=log10(0.75), high=log10(2.25)))
+        const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=log10(0.7), high=log10(2.3)))
         const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.85, high=0.45))
         const.setdefault("Y", dict(low=0.23, high=0.31))
         const.setdefault("a_MLT", dict(low=1.5, high=2.5))
