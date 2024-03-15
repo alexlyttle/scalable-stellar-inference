@@ -1,7 +1,6 @@
 import os
 import numpy as np
 import pandas as pd
-import jax.numpy as jnp
 from jax import random
 
 seed = 101
@@ -15,12 +14,12 @@ df = pd.read_csv(os.path.join(directory, input_filename), index_col=0)
 
 sigma = {}
 sigma["M_H"] = 0.1
-sigma["log_Teff"] = 75. / df["Teff"] / np.log(10)
+sigma["log_Teff"] = 0.015 / np.log(10)
 sigma["log_L"] = 0.01 / np.log(10)
-sigma["log_Dnu"] = 0.2 / df["Dnu"] / np.log(10)
+sigma["log_Dnu"] = 0.01 / np.log(10)
 
 mean = np.stack([df[param] for param in observables], -1)
-sigma = np.stack(np.broadcast_arrays(*[sigma[param] for param in observables]), -1)
+sigma = np.broadcast_to([sigma[param] for param in observables], mean.shape)
 
 rng, key = random.split(rng)
 obs = mean + sigma * random.normal(key, shape=mean.shape)
