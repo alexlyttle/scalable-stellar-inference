@@ -3,7 +3,8 @@ import numpyro.distributions as dist
 import jax.numpy as jnp
 
 from math import log10, log
-from jax import vmap
+from jax import vmap, Array
+from jax.typing import ArrayLike
 from typing import Optional
 from .emulator import Emulator
 from . import PACKAGEDIR
@@ -50,13 +51,12 @@ class SingleStarModel:
         "log_L", "log_g", "log_numax"
     ]
 
-    def __init__(self, observables: list, const: Optional[dict]=None, kind: str="diag"):
+    def __init__(self, observables: list, const: Optional[dict]=None, kind: str="diag", prior: str="informative"):
         emulator = Emulator(backend="jax")
         const = self._default_const(const=const)
 
         if kind not in ["none", "diag", "full"]:
             raise ValueError("Kind must be one of 'none', 'diag', or 'full'.")
-        
 
         A = jnp.vstack(
             [
@@ -98,6 +98,12 @@ class SingleStarModel:
         self.observables = observables
         self.observable_indices = observable_indices
 
+        prior = prior.lower()
+        priors = ["flat", "informative"]
+        if prior not in priors:
+            raise ValueError(f"Variable 'prior' must be one of {priors}.")
+        self._prior = prior
+
     def _emulator_precision(self) -> dict:
         with open(os.path.join(PACKAGEDIR, "data/emulator_error.json"), "r") as file:
             params = json.loads(file.read())
@@ -114,12 +120,30 @@ class SingleStarModel:
         const.setdefault("delta", self._emulator_precision())
         const.setdefault("log_evol", dict(loc=-0.7, scale=0.4, high=0.0))
         const.setdefault("log_mass", dict(loc=0.0, scale=0.3, low=log10(0.7), high=log10(2.3)))
-        const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.85, high=0.45))
-        const.setdefault("Y", dict(low=0.23, high=0.31))
+        const.setdefault("M_H", dict(loc=0.0, scale=0.5, low=-0.9, high=0.5))
+        const.setdefault("Y", dict(low=0.24, high=0.32))
         const.setdefault("a_MLT", dict(low=1.5, high=2.5))
+
+        const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
+        const.setdefault("dY_dZ", dict(loc=1.5, scale=1.0, low=0.0, high=3.0))
+        const.setdefault("precision_Y", dict(concentration=3.0, rate=1e-4))
+        const.setdefault("mu_a", dict(loc=2.0, scale=0.2, low=1.5, high=2.5))
+        const.setdefault("precision_a", dict(concentration=3.0, rate=1e-2))
         return const
 
-    def parameters(self) -> jnp.ndarray:
+    def enrichment_law(self, mh: Array, dydz: float, y0: float) -> Array:
+        f = dydz / (10**-(mh + self.log_zx_sun) + 1)
+        return (y0 + f) / (1 + f)
+
+    def _enrichment_unc_fac(self, mh: Array, dydz: float, y0: float) -> tuple:
+        zxp1 = 10**-(mh + self.log_zx_sun) + 1
+        fp1 = dydz / zxp1 + 1
+        return (
+            (1 - y0) / fp1**2 / zxp1,
+            1 / fp1,
+        )
+
+    def parameters(self) -> Array:
         log_evol = numpyro.sample("log_evol", dist.TruncatedNormal(**self.const["log_evol"]))
         evol = numpyro.deterministic("evol", jnp.power(10.0, log_evol))
 
@@ -134,9 +158,33 @@ class SingleStarModel:
             dist.TruncatedNormal(**self.const["M_H"])
         )
 
-        y = numpyro.sample("Y", dist.Uniform(**self.const["Y"]))
+        if self._prior == "flat":
+            y = numpyro.sample("Y", dist.Uniform(**self.const["Y"]))
+            a_mlt = numpyro.sample("a_MLT", dist.Uniform(**self.const["a_MLT"]))
+        elif self._prior == "informative":
+            precision_y = numpyro.sample("precision_Y", dist.Gamma(**self.const["precision_Y"]))
+            sigma_y = numpyro.deterministic("sigma_Y", precision_y**-0.5)
 
-        a_mlt = numpyro.sample("a_MLT", dist.Uniform(**self.const["a_MLT"]))
+            dydz = self.const["dY_dZ"]["loc"]
+            y0 = self.const["Y_0"]["loc"]
+            mu_y = self.enrichment_law(mh, dydz, y0)
+            f_dydz, f_y0 = self._enrichment_unc_fac(mh, dydz, y0)
+            sigma_y = jnp.sqrt(
+                sigma_y**2
+                + (f_dydz * self.const["dY_dZ"]["scale"])**2
+                + (f_y0 * self.const["Y_0"]["scale"])**2
+            )
+            y = numpyro.sample("Y", dist.TruncatedNormal(mu_y, sigma_y, **self.const["Y"]))
+
+            precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["precision_a"]))
+            sigma_a = numpyro.deterministic("sigma_a", precision_a**-0.5)
+
+            mu_a = self.const["mu_a"]["loc"]
+            sigma_a = jnp.sqrt(
+                sigma_a**2
+                + self.const["mu_a"]["scale"]**2
+            )
+            a_mlt = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, sigma_a, **self.const["a_MLT"]))
 
         df = self.const["delta"]["df"]
         scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
@@ -146,7 +194,7 @@ class SingleStarModel:
             axis=-1
         )
 
-    def predict(self, params: jnp.ndarray) -> tuple[jnp.ndarray]:
+    def predict(self, params: Array) -> tuple[Array]:
         outputs = self.emulator(params[:5])
         loc = (
             jnp.matmul(self.A, outputs + self.const["delta"]["loc"])
@@ -163,8 +211,8 @@ class SingleStarModel:
         if self.kind == "full":
             return loc, self.covariance / params[-1]
 
-    def likelihood(self, mean: jnp.ndarray, covariance: jnp.ndarray,
-                   obs: Optional[jnp.ndarray]=None, diag: Optional[jnp.ndarray]=None):
+    def likelihood(self, mean: Array, covariance: Array,
+                   obs: Optional[Array]=None, diag: Optional[Array]=None):
         
         if obs is None:
             obs_indices = jnp.arange(len(self.outputs))
@@ -185,7 +233,7 @@ class SingleStarModel:
             cov += diag[..., None] * jnp.identity(mean.shape[0])
             return numpyro.sample("y", dist.MultivariateNormal(mean, cov), obs=obs)
 
-    def __call__(self, obs: Optional[jnp.ndarray]=None, diag: Optional[jnp.ndarray]=None) -> None:
+    def __call__(self, obs: Optional[Array]=None, diag: Optional[Array]=None) -> None:
         params = self.parameters()
         mean, covariance = self.predict(params)            
         y = self.likelihood(mean, covariance, obs=obs, diag=diag)
@@ -198,7 +246,7 @@ class MultiStarModel(SingleStarModel):
         super(MultiStarModel, self).__init__(observables, const=const, kind=kind)
         self.num_stars = num_stars
 
-    def __call__(self, obs: Optional[jnp.ndarray]=None, diag=None) -> None:
+    def __call__(self, obs: Optional[Array]=None, diag=None) -> None:
         with numpyro.plate("star", self.num_stars):
             params = self.parameters()
         mean, covariance = vmap(self.predict)(params)
@@ -209,18 +257,18 @@ class HierarchicalStarModel(MultiStarModel):
     def __init__(self, num_stars: int, observables: list, const: Optional[dict]=None, kind: str="diag"):
         super(HierarchicalStarModel, self).__init__(num_stars, observables, const=const, kind=kind)
 
-    def _default_const(self, const: Optional[dict]=None) -> dict:
-        const = super(MultiStarModel, self)._default_const(const=const)
+    # def _default_const(self, const: Optional[dict]=None) -> dict:
+    #     const = super(MultiStarModel, self)._default_const(const=const)
 
-        # Hyperparameters
-        const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
-        const.setdefault("dY_dZ", dict(loc=1.5, scale=0.5, low=0.0, high=3.0))
-        const.setdefault("precision_Y", dict(concentration=2.0, rate=2e-4/3))
-        const.setdefault("mu_a", dict(loc=2.0, scale=0.1, low=1.3, high=2.7))
-        const.setdefault("precision_a", dict(concentration=2.0, rate=2e-2/3))
-        return const
+    #     # Hyperparameters
+    #     # const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
+    #     # const.setdefault("dY_dZ", dict(loc=1.5, scale=0.5, low=0.0, high=3.0))
+    #     # const.setdefault("precision_Y", dict(concentration=2.0, rate=2e-4/3))
+    #     # const.setdefault("mu_a", dict(loc=2.0, scale=0.1, low=1.3, high=2.7))
+    #     # const.setdefault("precision_a", dict(concentration=2.0, rate=2e-2/3))
+    #     return const
 
-    def hyperparameters(self) -> jnp.ndarray:
+    def hyperparameters(self) -> Array:
 
         y0 = numpyro.sample("Y_0", dist.Normal(**self.const["Y_0"]))
         dydz = numpyro.sample("dY_dZ", dist.TruncatedNormal(**self.const["dY_dZ"]))        
@@ -236,7 +284,7 @@ class HierarchicalStarModel(MultiStarModel):
             axis=-1
         )
 
-    def parameters(self, hyperparams: jnp.ndarray) -> jnp.ndarray:
+    def parameters(self, hyperparams: Array) -> Array:
 
         df = self.const["delta"]["df"]
         scaled_precision = numpyro.sample("scaled_precision", dist.Gamma(df/2, df/2))
@@ -245,7 +293,7 @@ class HierarchicalStarModel(MultiStarModel):
         evol = numpyro.deterministic("evol", 10**log_evol)
 
         log_mass = numpyro.sample(
-            "log_mass", 
+            "log_mass",
             dist.TruncatedNormal(**self.const["log_mass"])
         )
         mass = numpyro.deterministic("mass", jnp.power(10.0, log_mass))
@@ -259,26 +307,26 @@ class HierarchicalStarModel(MultiStarModel):
         f = hyperparams[1] / (10**-(mh + self.log_zx_sun) + 1)
         mu_y = (y0 + f) / (1 + f)
         sigma_y = hyperparams[2]
-        # low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
-        # y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
-        y_decentered = numpyro.sample("Y_decentered", dist.Normal())
+        low, high = decenter(0.22, mu_y, sigma_y), decenter(0.32, mu_y, sigma_y)
+        y_decentered = numpyro.sample("Y_decentered", dist.TruncatedNormal(low=low, high=high))
+        # y_decentered = numpyro.sample("Y_decentered", dist.Normal())
         y = numpyro.deterministic("Y", mu_y + sigma_y * y_decentered)
-        # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, hyperparams["sigma_Y"], low=0.22, high=0.32))
+        # params["Y"] = numpyro.sample("Y", dist.TruncatedNormal(mu_y, sigma_y, low=0.22, high=0.32))
 
         mu_a = hyperparams[3]
         sigma_a = hyperparams[4]
-        # low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
-        # a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
-        a_decentered = numpyro.sample("a_decentered", dist.Normal())
+        low, high = decenter(1.3, mu_a, sigma_a), decenter(2.7, mu_a, sigma_a)
+        a_decentered = numpyro.sample("a_decentered", dist.TruncatedNormal(low=low, high=high))
+        # a_decentered = numpyro.sample("a_decentered", dist.Normal())
         a_mlt = numpyro.deterministic("a_MLT", mu_a + sigma_a * a_decentered)
-        # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, hyperparams["sigma_a"], low=1.3, high=2.7))
+        # params["a_MLT"] = numpyro.sample("a_MLT", dist.TruncatedNormal(mu_a, sigma_a, low=1.3, high=2.7))
 
         return jnp.stack(
             [evol, mass, mh, y, a_mlt, log_mass, scaled_precision],
             axis=-1
         )
 
-    def __call__(self, obs: Optional[jnp.ndarray]=None, diag: Optional[jnp.ndarray]=None) -> None:
+    def __call__(self, obs: Optional[Array]=None, diag: Optional[Array]=None) -> None:
         hyperparams = self.hyperparameters()
         with numpyro.plate("star", self.num_stars):
             params = self.parameters(hyperparams)
