@@ -14,8 +14,8 @@ df = pd.read_csv(os.path.join(directory, input_filename), index_col=0)
 
 sigma = {}
 sigma["M_H"] = 0.1
-sigma["log_Teff"] = 0.015 / np.log(10)
-sigma["log_L"] = 0.01 / np.log(10)
+sigma["log_Teff"] = 0.02 / np.log(10)
+sigma["log_L"] = 0.02 / np.log(10)
 sigma["log_Dnu"] = 0.01 / np.log(10)
 
 mean = np.stack([df[param] for param in observables], -1)
