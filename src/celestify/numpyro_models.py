@@ -127,8 +127,10 @@ class SingleStarModel:
         const.setdefault("Y_0", dict(loc=0.247, scale=0.001))
         const.setdefault("dY_dZ", dict(loc=1.5, scale=1.0, low=0.0, high=3.0))
         const.setdefault("precision_Y", dict(concentration=3.0, rate=1e-4))
+        const.setdefault("log_sigma_Y", dict(loc=-2.3, scale=0.2))
         const.setdefault("mu_a", dict(loc=2.0, scale=0.2, low=1.5, high=2.5))
         const.setdefault("precision_a", dict(concentration=3.0, rate=1e-2))
+        const.setdefault("log_sigma_a", dict(loc=-1.3, scale=0.2))
         return const
 
     def enrichment_law(self, mh: Array, dydz: float, y0: float) -> Array:
@@ -164,6 +166,8 @@ class SingleStarModel:
         elif self._prior == "informative":
             precision_y = numpyro.sample("precision_Y", dist.Gamma(**self.const["precision_Y"]))
             sigma_y = numpyro.deterministic("sigma_Y", precision_y**-0.5)
+            # log_sigma_y = numpyro.sample("log_sigma_Y", dist.Normal(**self.const["log_sigma_Y"]))
+            # sigma_y = numpyro.deterministic("sigma_Y", 10**log_sigma_y)
 
             dydz = self.const["dY_dZ"]["loc"]
             y0 = self.const["Y_0"]["loc"]
@@ -178,7 +182,9 @@ class SingleStarModel:
 
             precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["precision_a"]))
             sigma_a = numpyro.deterministic("sigma_a", precision_a**-0.5)
-
+            # log_sigma_a = numpyro.sample("log_sigma_a", dist.Normal(**self.const["log_sigma_a"]))
+            # sigma_a = numpyro.deterministic("sigma_a", 10**log_sigma_a)
+            
             mu_a = self.const["mu_a"]["loc"]
             sigma_a = jnp.sqrt(
                 sigma_a**2
@@ -213,7 +219,7 @@ class SingleStarModel:
 
     def likelihood(self, mean: Array, covariance: Array,
                    obs: Optional[Array]=None, diag: Optional[Array]=None):
-        
+
         if obs is None:
             obs_indices = jnp.arange(len(self.outputs))
         else:
@@ -274,10 +280,16 @@ class HierarchicalStarModel(MultiStarModel):
         dydz = numpyro.sample("dY_dZ", dist.TruncatedNormal(**self.const["dY_dZ"]))        
         precision_y = numpyro.sample("precision_Y", dist.Gamma(**self.const["precision_Y"]))
         sigma_y = numpyro.deterministic("sigma_Y", precision_y**-0.5)
+        
+        # log_sigma_y = numpyro.sample("log_sigma_Y", dist.Normal(**self.const["log_sigma_Y"]))
+        # sigma_y = numpyro.deterministic("sigma_Y", 10**log_sigma_y)
 
         mu_a = numpyro.sample("mu_a", dist.TruncatedNormal(**self.const["mu_a"]))
         precision_a = numpyro.sample("precision_a", dist.Gamma(**self.const["precision_a"]))
         sigma_a = numpyro.deterministic("sigma_a", precision_a**-0.5)
+
+        # log_sigma_a = numpyro.sample("log_sigma_a", dist.Normal(**self.const["log_sigma_a"]))
+        # sigma_a = numpyro.deterministic("sigma_a", 10**log_sigma_a)
 
         return jnp.stack(
             [y0, dydz, sigma_y, mu_a, sigma_a],
